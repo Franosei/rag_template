@@ -419,3 +419,4 @@ FodyWeavers.xsd
 .venv/
 pdf.py
 philipah
+.env.example
