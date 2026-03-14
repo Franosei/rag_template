@@ -1,8 +1,13 @@
+"""Common extraction primitives."""
+
+from __future__ import annotations
+
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Optional
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 from src.ingestion.models import Chunk, Document
 
@@ -10,51 +15,39 @@ logger = logging.getLogger(__name__)
 
 
 class ExtractionResult(BaseModel):
-    """Result from document extraction"""
+    """Normalized extractor output."""
+
     document: Document
     text_content: str
-    chunks: List[Chunk] = []
+    chunks: list[Chunk] = Field(default_factory=list)
     success: bool = True
-    error_message: Optional[str] = None
-    
-    class Config:
-        arbitrary_types_allowed = True
+    error_message: str | None = None
 
 
 class BaseExtractor(ABC):
-    """Base class for document extractors"""
-    
-    def __init__(self):
+    """Base interface for file extractors."""
+
+    def __init__(self) -> None:
         self.logger = logging.getLogger(f"extractors.{self.__class__.__name__}")
-    
+
     @abstractmethod
     async def can_extract(self, file_path: Path) -> bool:
-        """Check if this extractor can handle the file"""
-        pass
-    
+        """Return whether the extractor can handle the file."""
+
     @abstractmethod
-    async def extract(
-        self,
-        file_path: Path,
-        doc_id: str,
-        folder_id: str
-    ) -> ExtractionResult:
-        """Extract content from file"""
-        pass
-    
+    async def extract(self, file_path: Path, doc_id: str, folder_id: str) -> ExtractionResult:
+        """Extract content and metadata from a file."""
+
     def _create_document_metadata(
         self,
         file_path: Path,
         doc_id: str,
         folder_id: str,
-        **kwargs
+        **kwargs: Any,
     ) -> Document:
-        """Create Document metadata object"""
-        from src.ingestion.models import Document
-        from datetime import datetime
-        
+        """Create a document metadata record from a file path."""
+
         stat = file_path.stat()
-        
         return Document(
             doc_id=doc_id,
             folder_id=folder_id,
@@ -62,6 +55,5 @@ class BaseExtractor(ABC):
             file_name=file_path.name,
             file_extension=file_path.suffix.lower(),
             file_size_bytes=stat.st_size,
-            created_at=datetime.utcnow(),
-            **kwargs
+            **kwargs,
         )

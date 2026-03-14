@@ -1,270 +1,141 @@
-import logging
+"""Spreadsheet and CSV extraction."""
+
+from __future__ import annotations
+
+import csv
+import hashlib
 from pathlib import Path
+
 import openpyxl
-from typing import List, Dict, Any
 
 from src.ingestion.extractors.common import BaseExtractor, ExtractionResult
-from src.ingestion.models import Document, Chunk, Modality, ExtractionMethod, ConfidenceLevel, TableMetadata
+from src.ingestion.models import Chunk, ConfidenceLevel, ExtractionMethod, Modality, TableMetadata
 from src.utils.ids import generate_chunk_id
-import hashlib
-
-logger = logging.getLogger(__name__)
 
 
 class XLSXExtractor(BaseExtractor):
-    """
-    Extract data from Excel files.
-    Treats each sheet as a table and creates table chunks.
-    """
-    
-    def __init__(self):
-        super().__init__()
-        self.supported_extensions = ['.xlsx', '.xls', '.csv']
-    
+    """Extract spreadsheet sheets into table-oriented chunks."""
+
     async def can_extract(self, file_path: Path) -> bool:
-        """Check if file is an Excel file"""
-        return file_path.suffix.lower() in self.supported_extensions
-    
-    async def extract(
-        self,
-        file_path: Path,
-        doc_id: str,
-        folder_id: str
-    ) -> ExtractionResult:
-        """
-        Extract tables from Excel file.
-        
-        Each sheet becomes:
-        1. A table chunk with structured data
-        2. Linearized text representation for vector search
-        """
+        """Return whether the file is tabular data we support."""
+
+        return file_path.suffix.lower() in {".xlsx", ".xls", ".csv"}
+
+    async def extract(self, file_path: Path, doc_id: str, folder_id: str) -> ExtractionResult:
+        """Route extraction based on file type."""
+
+        if file_path.suffix.lower() == ".csv":
+            return await self._extract_csv(file_path, doc_id, folder_id)
+        return await self._extract_xlsx(file_path, doc_id, folder_id)
+
+    async def _extract_xlsx(self, file_path: Path, doc_id: str, folder_id: str) -> ExtractionResult:
+        """Extract content from an XLSX workbook."""
+
+        document = self._create_document_metadata(file_path, doc_id, folder_id, has_tables=True)
         try:
-            if file_path.suffix.lower() == '.csv':
-                return await self._extract_csv(file_path, doc_id, folder_id)
-            else:
-                return await self._extract_xlsx(file_path, doc_id, folder_id)
-        
-        except Exception as e:
-            self.logger.error(f"Excel extraction failed for {file_path}: {e}", exc_info=True)
-            
-            document = self._create_document_metadata(
-                file_path=file_path,
-                doc_id=doc_id,
-                folder_id=folder_id,
-                has_tables=True
-            )
-            
-            return ExtractionResult(
-                document=document,
-                text_content="",
-                success=False,
-                error_message=str(e)
-            )
-    
-    async def _extract_xlsx(
-        self,
-        file_path: Path,
-        doc_id: str,
-        folder_id: str
-    ) -> ExtractionResult:
-        """Extract from XLSX/XLS file"""
-        
-        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-        
-        chunks = []
-        text_parts = []
-        table_index = 0
-        
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            
-            # Extract sheet data
-            sheet_data = []
-            headers = []
-            
-            for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                # Filter out empty rows
-                row_data = [str(cell) if cell is not None else "" for cell in row]
-                
-                if not any(cell.strip() for cell in row_data):
+            workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            text_sections: list[str] = []
+            chunks: list[Chunk] = []
+
+            for table_index, sheet_name in enumerate(workbook.sheetnames):
+                worksheet = workbook[sheet_name]
+                rows = []
+                for row in worksheet.iter_rows(values_only=True):
+                    values = [str(cell).strip() if cell is not None else "" for cell in row]
+                    if any(values):
+                        rows.append(values)
+
+                if not rows:
                     continue
-                
-                if row_idx == 1:
-                    # First row as headers
-                    headers = row_data
-                else:
-                    sheet_data.append(row_data)
-            
-            if not sheet_data:
-                continue  # Skip empty sheets
-            
-            # Convert to structured format
-            structured_data = []
-            for row in sheet_data:
-                row_dict = {}
-                for i, value in enumerate(row):
-                    header = headers[i] if i < len(headers) else f"Column_{i+1}"
-                    row_dict[header] = value
-                structured_data.append(row_dict)
-            
-            # Create linearized text representation
-            table_text = f"Sheet: {sheet_name}\n"
-            table_text += " | ".join(headers) + "\n"
-            table_text += "-" * 80 + "\n"
-            
-            for row in sheet_data[:50]:  # First 50 rows
-                table_text += " | ".join(row) + "\n"
-            
-            text_parts.append(table_text)
-            
-            # Create table chunk
-            chunk_id = generate_chunk_id(doc_id, table_index)
-            content_hash = hashlib.md5(table_text.encode()).hexdigest()
-            
+
+                headers = rows[0]
+                structured_rows = []
+                for row in rows[1:101]:
+                    structured_rows.append(
+                        {
+                            headers[index] if index < len(headers) and headers[index] else f"column_{index + 1}": value
+                            for index, value in enumerate(row)
+                        }
+                    )
+
+                linearized = [f"Sheet: {sheet_name}", " | ".join(headers)]
+                linearized.extend(" | ".join(row) for row in rows[1:51])
+                table_text = "\n".join(linearized)
+                text_sections.append(table_text)
+
+                chunks.append(
+                    Chunk(
+                        chunk_id=generate_chunk_id(doc_id, table_index),
+                        folder_id=folder_id,
+                        source_doc_id=doc_id,
+                        modality=Modality.TABLE,
+                        content_text=table_text,
+                        file_path=str(file_path.resolve()),
+                        file_name=file_path.name,
+                        chunk_index=table_index,
+                        extraction_method=ExtractionMethod.TABLE_PARSE,
+                        confidence=ConfidenceLevel.HIGH,
+                        table_metadata=TableMetadata(
+                            rows=max(len(rows) - 1, 0),
+                            columns=len(headers),
+                            headers=headers,
+                            table_index=table_index,
+                            structured_data=structured_rows,
+                        ),
+                        metadata={"sheet_name": sheet_name},
+                        content_hash=hashlib.md5(table_text.encode("utf-8")).hexdigest(),
+                    )
+                )
+
+            workbook.close()
+            document.table_chunks = len(chunks)
+            return ExtractionResult(document=document, text_content="\n\n".join(text_sections), chunks=chunks, success=True)
+        except Exception as exc:
+            return ExtractionResult(document=document, text_content="", success=False, error_message=str(exc))
+
+    async def _extract_csv(self, file_path: Path, doc_id: str, folder_id: str) -> ExtractionResult:
+        """Extract content from a CSV file."""
+
+        document = self._create_document_metadata(file_path, doc_id, folder_id, has_tables=True)
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore", newline="") as handle:
+                rows = list(csv.reader(handle))
+            if not rows:
+                return ExtractionResult(document=document, text_content="", success=True)
+
+            headers = rows[0]
+            data_rows = rows[1:]
+            linearized = [" | ".join(headers)]
+            linearized.extend(" | ".join(row) for row in data_rows[:50])
+            table_text = "\n".join(linearized)
+
             chunk = Chunk(
-                chunk_id=chunk_id,
+                chunk_id=generate_chunk_id(doc_id, 0),
                 folder_id=folder_id,
                 source_doc_id=doc_id,
                 modality=Modality.TABLE,
                 content_text=table_text,
-                file_path=str(file_path),
+                file_path=str(file_path.resolve()),
                 file_name=file_path.name,
-                chunk_index=table_index,
+                chunk_index=0,
                 extraction_method=ExtractionMethod.TABLE_PARSE,
                 confidence=ConfidenceLevel.HIGH,
                 table_metadata=TableMetadata(
-                    rows=len(sheet_data),
+                    rows=len(data_rows),
                     columns=len(headers),
                     headers=headers,
-                    table_index=table_index,
-                    structured_data=structured_data[:100]  # Limit to 100 rows
+                    table_index=0,
+                    structured_data=[
+                        {
+                            headers[index] if index < len(headers) and headers[index] else f"column_{index + 1}": value
+                            for index, value in enumerate(row)
+                        }
+                        for row in data_rows[:100]
+                    ],
                 ),
-                metadata={"sheet_name": sheet_name},
-                content_hash=content_hash
+                content_hash=hashlib.md5(table_text.encode("utf-8")).hexdigest(),
             )
-            
-            chunks.append(chunk)
-            table_index += 1
-        
-        wb.close()
-        
-        # Create document metadata
-        document = self._create_document_metadata(
-            file_path=file_path,
-            doc_id=doc_id,
-            folder_id=folder_id,
-            has_tables=True,
-            table_chunks=len(chunks)
-        )
-        
-        full_text = "\n\n".join(text_parts)
-        
-        self.logger.info(
-            f"Extracted Excel: {file_path.name}",
-            extra={
-                "sheets": len(wb.sheetnames),
-                "tables": len(chunks),
-                "text_length": len(full_text)
-            }
-        )
-        
-        return ExtractionResult(
-            document=document,
-            text_content=full_text,
-            chunks=chunks,
-            success=True
-        )
-    
-    async def _extract_csv(
-        self,
-        file_path: Path,
-        doc_id: str,
-        folder_id: str
-    ) -> ExtractionResult:
-        """Extract from CSV file"""
-        import csv
-        
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            reader = csv.reader(f)
-            rows = list(reader)
-        
-        if not rows:
-            document = self._create_document_metadata(
-                file_path=file_path,
-                doc_id=doc_id,
-                folder_id=folder_id,
-                has_tables=True
-            )
-            
-            return ExtractionResult(
-                document=document,
-                text_content="",
-                success=True
-            )
-        
-        headers = rows[0] if rows else []
-        data_rows = rows[1:] if len(rows) > 1 else []
-        
-        # Create structured data
-        structured_data = []
-        for row in data_rows:
-            row_dict = {}
-            for i, value in enumerate(row):
-                header = headers[i] if i < len(headers) else f"Column_{i+1}"
-                row_dict[header] = value
-            structured_data.append(row_dict)
-        
-        # Create linearized text
-        table_text = " | ".join(headers) + "\n"
-        table_text += "-" * 80 + "\n"
-        
-        for row in data_rows[:50]:  # First 50 rows
-            table_text += " | ".join(row) + "\n"
-        
-        # Create table chunk
-        chunk_id = generate_chunk_id(doc_id, 0)
-        content_hash = hashlib.md5(table_text.encode()).hexdigest()
-        
-        chunk = Chunk(
-            chunk_id=chunk_id,
-            folder_id=folder_id,
-            source_doc_id=doc_id,
-            modality=Modality.TABLE,
-            content_text=table_text,
-            file_path=str(file_path),
-            file_name=file_path.name,
-            chunk_index=0,
-            extraction_method=ExtractionMethod.TABLE_PARSE,
-            confidence=ConfidenceLevel.HIGH,
-            table_metadata=TableMetadata(
-                rows=len(data_rows),
-                columns=len(headers),
-                headers=headers,
-                table_index=0,
-                structured_data=structured_data[:100]
-            ),
-            content_hash=content_hash
-        )
-        
-        document = self._create_document_metadata(
-            file_path=file_path,
-            doc_id=doc_id,
-            folder_id=folder_id,
-            has_tables=True,
-            table_chunks=1
-        )
-        
-        self.logger.info(
-            f"Extracted CSV: {file_path.name}",
-            extra={
-                "rows": len(data_rows),
-                "columns": len(headers)
-            }
-        )
-        
-        return ExtractionResult(
-            document=document,
-            text_content=table_text,
-            chunks=[chunk],
-            success=True
-        )
+            document.table_chunks = 1
+            return ExtractionResult(document=document, text_content=table_text, chunks=[chunk], success=True)
+        except Exception as exc:
+            return ExtractionResult(document=document, text_content="", success=False, error_message=str(exc))

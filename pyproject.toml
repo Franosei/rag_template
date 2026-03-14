@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clinical-trials-hybrid-agent"
+version = "0.1.0"
+description = "FastAPI hybrid retrieval and agent orchestration for clinical-trials documents."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "httpx>=0.28.0",
+  "openpyxl>=3.1.5",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.6.1",
+  "pypdf>=5.1.0",
+  "python-docx>=1.1.2",
+  "uvicorn>=0.32.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "ruff>=0.8.0",
+]
+
+[project.scripts]
+clinical-trials-rag = "src.app.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,246 +1,201 @@
-import logging
+"""Thin optional OpenAI-compatible client used for answer synthesis."""
+
+from __future__ import annotations
+
 import json
-import time
-import random
-from typing import TypeVar, Type, Optional, Dict, Any, List
-from openai import OpenAI, OpenAIError, RateLimitError, APITimeoutError
+
+import httpx
 from pydantic import BaseModel, ValidationError
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log
-)
 
 from src.app.settings import settings
 
-logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound=BaseModel)
+class LLMError(Exception):
+    """Raised when a remote LLM call fails."""
 
 
 class LLMResponse(BaseModel):
-    """Raw LLM response wrapper"""
+    """Normalized response metadata from the remote LLM."""
+
     content: str
     model: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    finish_reason: str
-
-
-class LLMError(Exception):
-    """Base exception for LLM client errors"""
-    pass
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    finish_reason: str | None = None
 
 
 class LLMClient:
-    """
-    Wrapper around OpenAI client with:
-    - JSON mode enforcement
-    - Automatic retry with exponential backoff
-    - Schema validation and repair
-    - Token tracking
-    """
-    
+    """Small HTTPX-based client for OpenAI-compatible chat completion APIs."""
+
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        temperature: float | None = None,
+        timeout_seconds: float | None = None,
     ):
-        self.client = OpenAI(api_key=api_key or settings.openai_api_key)
+        self.api_key = api_key or settings.openai_api_key
         self.model = model or settings.openai_model
-        self.temperature = temperature or settings.openai_temperature
-        self.max_tokens = max_tokens or settings.openai_max_tokens
-        
-        # Track usage
+        self.base_url = (base_url or settings.openai_base_url).rstrip("/")
+        self.temperature = settings.openai_temperature if temperature is None else temperature
+        self.timeout_seconds = timeout_seconds or settings.llm_timeout_seconds
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
-    
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.5, min=0.5, max=10),
-        retry=retry_if_exception_type((RateLimitError, APITimeoutError, OpenAIError)),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True
-    )
-    def _call_openai(
+
+    @property
+    def is_configured(self) -> bool:
+        """Return whether the client has enough configuration to make calls."""
+
+        return bool(self.api_key)
+
+    def _headers(self) -> dict[str, str]:
+        """Return HTTP headers for the configured backend."""
+
+        if not self.api_key:
+            raise LLMError("OPENAI_API_KEY is not configured.")
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _chat_completion(
         self,
-        messages: List[Dict[str, str]],
-        response_format: Optional[Dict[str, str]] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+        messages: list[dict[str, object]],
+        *,
+        response_format: dict[str, str] | None = None,
+        temperature: float | None = None,
     ) -> LLMResponse:
-        """
-        Low-level OpenAI call with transport-level retry.
-        Handles rate limits, timeouts, transient errors.
-        """
+        """Call the remote chat completion endpoint and normalize the response."""
+
+        payload: dict[str, object] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature if temperature is None else temperature,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temperature or self.temperature,
-                max_tokens=max_tokens or self.max_tokens,
-                response_format=response_format or {"type": "text"}
+            with httpx.Client(timeout=self.timeout_seconds) as client:
+                response = client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LLMError(f"LLM request failed: {exc}") from exc
+
+        body = response.json()
+        choice = body["choices"][0]
+        usage = body.get("usage", {})
+        message_content = choice["message"]["content"]
+        if isinstance(message_content, list):
+            message_content = "\n".join(
+                item.get("text", "") for item in message_content if isinstance(item, dict)
             )
-            
-            # Track tokens
-            usage = response.usage
-            self.total_prompt_tokens += usage.prompt_tokens
-            self.total_completion_tokens += usage.completion_tokens
-            
-            logger.debug(
-                "LLM call succeeded",
-                extra={
-                    "model": self.model,
-                    "prompt_tokens": usage.prompt_tokens,
-                    "completion_tokens": usage.completion_tokens,
-                    "finish_reason": response.choices[0].finish_reason
-                }
-            )
-            
-            return LLMResponse(
-                content=response.choices[0].message.content,
-                model=response.model,
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-                total_tokens=usage.total_tokens,
-                finish_reason=response.choices[0].finish_reason
-            )
-            
-        except (RateLimitError, APITimeoutError, OpenAIError) as e:
-            logger.warning(f"LLM call failed (will retry): {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected LLM error: {e}")
-            raise LLMError(f"LLM call failed: {e}") from e
-    
+
+        self.total_prompt_tokens += int(usage.get("prompt_tokens", 0))
+        self.total_completion_tokens += int(usage.get("completion_tokens", 0))
+
+        return LLMResponse(
+            content=str(message_content or ""),
+            model=str(body.get("model", self.model)),
+            prompt_tokens=int(usage.get("prompt_tokens", 0)),
+            completion_tokens=int(usage.get("completion_tokens", 0)),
+            total_tokens=int(usage.get("total_tokens", 0)),
+            finish_reason=choice.get("finish_reason"),
+        )
+
     def generate_text(
         self,
         prompt: str,
-        system_prompt: Optional[str] = None,
-        temperature: Optional[float] = None
+        *,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
     ) -> str:
-        """Simple text generation (non-structured)"""
-        messages = []
-        
+        """Generate a plain-text completion."""
+
+        messages: list[dict[str, object]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        
         messages.append({"role": "user", "content": prompt})
-        
-        response = self._call_openai(messages, temperature=temperature)
-        return response.content
-    
+        return self._chat_completion(messages, temperature=temperature).content
+
     def generate_structured(
         self,
         prompt: str,
-        response_model: Type[T],
-        system_prompt: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_repair_attempts: int = 2
-    ) -> T:
-        """
-        Generate structured output conforming to a Pydantic model.
-        
-        Implements semantic retry with repair loop:
-        1. Ask for JSON matching schema
-        2. If invalid JSON: repair prompt
-        3. If schema mismatch: repair with validation errors
-        4. Max repair_attempts, then fail
-        """
-        messages = []
-        
-        # Build system prompt with schema
+        *,
+        response_model: type[BaseModel],
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+    ) -> BaseModel:
+        """Request JSON output and validate it against a Pydantic model."""
+
         schema_json = json.dumps(response_model.model_json_schema(), indent=2)
-        
-        full_system_prompt = f"""{system_prompt or "You are a helpful assistant."}
+        rendered_system_prompt = (
+            system_prompt or "You are a helpful assistant."
+        ) + f"\n\nReturn JSON matching this schema exactly:\n{schema_json}"
 
-You must respond with valid JSON that matches this schema exactly:
+        response = self._chat_completion(
+            [
+                {"role": "system", "content": rendered_system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=temperature,
+        )
 
-{schema_json}
+        try:
+            payload = json.loads(response.content)
+            return response_model.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise LLMError(f"Structured LLM response could not be validated: {exc}") from exc
 
-CRITICAL: Respond ONLY with the JSON object. No markdown, no backticks, no preamble, no explanation.
-"""
-        
-        messages.append({"role": "system", "content": full_system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        
-        for attempt in range(1 + max_repair_attempts):
-            try:
-                # Call OpenAI in JSON mode
-                response = self._call_openai(
-                    messages,
-                    response_format={"type": "json_object"}
-                )
-                
-                # Parse JSON
-                try:
-                    raw_json = json.loads(response.content)
-                except json.JSONDecodeError as e:
-                    if attempt < max_repair_attempts:
-                        logger.warning(f"Invalid JSON on attempt {attempt + 1}, repairing...")
-                        messages.append({"role": "assistant", "content": response.content})
-                        messages.append({
-                            "role": "user",
-                            "content": f"That was invalid JSON. Error: {e}. Please return valid JSON matching the schema with no other text."
-                        })
-                        continue
-                    else:
-                        raise LLMError(f"Failed to generate valid JSON after {max_repair_attempts + 1} attempts") from e
-                
-                # Validate against Pydantic model
-                try:
-                    validated = response_model.model_validate(raw_json)
-                    logger.info(
-                        f"Successfully generated {response_model.__name__}",
-                        extra={"attempt": attempt + 1}
-                    )
-                    return validated
-                
-                except ValidationError as e:
-                    if attempt < max_repair_attempts:
-                        logger.warning(f"Schema validation failed on attempt {attempt + 1}, repairing...")
-                        
-                        # Format validation errors for repair
-                        error_details = "\n".join([
-                            f"- Field '{err['loc'][0]}': {err['msg']}"
-                            for err in e.errors()
-                        ])
-                        
-                        messages.append({"role": "assistant", "content": response.content})
-                        messages.append({
-                            "role": "user",
-                            "content": f"""That JSON didn't match the schema. Validation errors:
+    def usage_stats(self) -> dict[str, int]:
+        """Return cumulative token usage for the client."""
 
-{error_details}
-
-Please return corrected JSON matching the schema exactly."""
-                        })
-                        continue
-                    else:
-                        raise LLMError(
-                            f"Failed to generate valid schema after {max_repair_attempts + 1} attempts. "
-                            f"Errors: {e}"
-                        ) from e
-            
-            except LLMError:
-                # Don't retry LLMErrors (they're already retried at transport level)
-                raise
-            except Exception as e:
-                logger.error(f"Unexpected error in generate_structured: {e}")
-                raise LLMError(f"Structured generation failed: {e}") from e
-        
-        # Should never reach here due to loop logic, but satisfy type checker
-        raise LLMError("Structured generation failed")
-    
-    def get_usage_stats(self) -> Dict[str, int]:
-        """Return token usage stats"""
         return {
             "prompt_tokens": self.total_prompt_tokens,
             "completion_tokens": self.total_completion_tokens,
-            "total_tokens": self.total_prompt_tokens + self.total_completion_tokens
+            "total_tokens": self.total_prompt_tokens + self.total_completion_tokens,
         }
+
+    def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> list[list[float]]:
+        """Generate embeddings for one or more texts using the configured backend."""
+
+        if not texts:
+            return []
+        if not self.api_key:
+            raise LLMError("OPENAI_API_KEY is not configured.")
+
+        payload = {
+            "model": model or settings.openai_embedding_model,
+            "input": texts,
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout_seconds) as client:
+                response = client.post(
+                    f"{self.base_url}/embeddings",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LLMError(f"Embedding request failed: {exc}") from exc
+
+        body = response.json()
+        rows = sorted(body.get("data", []), key=lambda item: int(item.get("index", 0)))
+        embeddings = [list(map(float, row.get("embedding", []))) for row in rows]
+        if len(embeddings) != len(texts):
+            raise LLMError("Embedding response count did not match the request count.")
+        return embeddings

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Clinical Trials Hybrid Agent</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="eyebrow">Clinical Evidence Workspace</p>
+          <h1>Semantic, hybrid, and graph retrieval for clinical-trials knowledge systems.</h1>
+          <p class="subhead">
+            Index data from local paths, uploads, remote documents, or API manifests, then query it with provenance and graph-aware retrieval.
+          </p>
+        </div>
+        <div class="status-bar">
+          <div class="status-pill" id="llm-pill">LLM: checking</div>
+          <div class="status-pill" id="graph-pill">Graph: enabled</div>
+          <button id="bootstrap-button" class="primary">Bootstrap sample corpus</button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar">
+          <section class="card metrics-card">
+            <div class="metric-grid">
+              <div class="metric">
+                <span>Folders</span>
+                <strong id="folder-count">0</strong>
+              </div>
+              <div class="metric">
+                <span>Chunks</span>
+                <strong id="chunk-count">0</strong>
+              </div>
+              <div class="metric">
+                <span>Safe roots</span>
+                <strong id="roots-count">0</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-head">
+              <h2>Data Intake</h2>
+              <p>Secure ingestion with controlled local access and size-limited remote fetches.</p>
+            </div>
+
+            <label class="field">
+              <span>Source type</span>
+              <select id="source-type">
+                <option value="local_path">Local path</option>
+                <option value="remote_url">Remote URL</option>
+                <option value="api_manifest">API manifest</option>
+                <option value="inline_upload">Upload from browser</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Collection label</span>
+              <input id="folder-name" type="text" placeholder="phase3_estimands">
+            </label>
+
+            <label id="location-field" class="field">
+              <span>Location</span>
+              <input id="source-location" type="text" placeholder="C:\safe-root\trial-docs or https://example.org/file.pdf">
+            </label>
+
+            <label id="upload-field" class="field hidden">
+              <span>Upload file</span>
+              <input id="upload-input" type="file">
+            </label>
+
+            <button id="source-submit" class="secondary">Ingest source</button>
+            <pre id="source-status" class="status-box"></pre>
+          </section>
+
+          <section class="card sidebar-list-card">
+            <div class="section-head">
+              <h2>Indexed Collections</h2>
+              <p>Check only the folders you want in scope for the next question.</p>
+            </div>
+            <div id="sources-list" class="sources-list"></div>
+          </section>
+        </aside>
+
+        <main class="workspace">
+          <section class="card composer-card">
+            <div class="section-head">
+              <h2>Ask the System</h2>
+              <p>Use this as a developer-facing validation console or a non-technical search interface.</p>
+            </div>
+            <label class="field">
+              <span>Question</span>
+              <textarea id="question-input" rows="5" placeholder="What do the ICH E9 and E9(R1) documents say about estimands?"></textarea>
+            </label>
+            <div class="composer-actions">
+              <button id="query-submit" class="primary">Run query</button>
+              <span class="hint">Semantic retrieval + lexical grounding + graph expansion + citation-aware answer synthesis</span>
+            </div>
+          </section>
+
+          <section id="answer-box" class="card answer-card hidden">
+            <div class="section-head">
+              <h2>Answer</h2>
+              <p id="answer-meta">Waiting for a query.</p>
+            </div>
+            <div id="warning-box" class="warning-box hidden"></div>
+            <div id="answer-text" class="answer-text"></div>
+            <div class="references-block">
+              <span>Evidence references</span>
+              <div id="answer-references" class="reference-pills"></div>
+            </div>
+          </section>
+
+          <section class="workspace-grid">
+            <section class="card">
+              <div class="section-head">
+                <h2>Citations</h2>
+                <p>Primary evidence used to support the answer.</p>
+              </div>
+              <div id="citations-list" class="stack-list"></div>
+            </section>
+
+            <section class="card">
+              <div class="section-head">
+                <h2>Graph Retrieval</h2>
+                <p>Concept expansion and graph paths used during retrieval.</p>
+              </div>
+              <div class="graph-columns">
+                <div>
+                  <h3>Query concepts</h3>
+                  <div id="graph-concepts" class="chip-list"></div>
+                </div>
+                <div>
+                  <h3>Graph paths</h3>
+                  <div id="graph-paths" class="stack-list compact"></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="card workspace-span-2 retrieval-blend-card">
+              <div class="section-head">
+                <h2>Retrieval Blend</h2>
+                <p>Top semantic, lexical, and graph evidence candidates before answer synthesis.</p>
+              </div>
+              <div class="retrieval-blend-grid">
+                <div class="blend-panel">
+                  <h3>Semantic hits</h3>
+                  <div id="semantic-hits" class="stack-list compact"></div>
+                </div>
+                <div class="blend-panel">
+                  <h3>Hybrid hits</h3>
+                  <div id="hybrid-hits" class="stack-list compact"></div>
+                </div>
+                <div class="blend-panel">
+                  <h3>Graph hits</h3>
+                  <div id="graph-hits" class="stack-list compact"></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="section-head">
+                <h2>Run Trace</h2>
+                <p>Operational trace for debugging and confidence review.</p>
+              </div>
+              <div id="trace-summary" class="trace-grid"></div>
+            </section>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div id="drawer-overlay" class="drawer-overlay hidden"></div>
+    <aside id="citation-drawer" class="citation-drawer hidden" aria-hidden="true">
+      <div class="drawer-head">
+        <div>
+          <p class="eyebrow drawer-eyebrow">Evidence Detail</p>
+          <h2 id="drawer-title">Citation</h2>
+        </div>
+        <button id="drawer-close" class="drawer-close" aria-label="Close evidence drawer">Close</button>
+      </div>
+      <div class="drawer-meta">
+        <div class="drawer-meta-item">
+          <span>Document</span>
+          <strong id="drawer-document">-</strong>
+        </div>
+        <div class="drawer-meta-item">
+          <span>Page</span>
+          <strong id="drawer-page">-</strong>
+        </div>
+        <div class="drawer-meta-item">
+          <span>Retrieval</span>
+          <strong id="drawer-mode">-</strong>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <h3>Matched terms</h3>
+        <div id="drawer-terms" class="chip-list"></div>
+      </div>
+      <div class="drawer-section">
+        <h3>Supporting passage</h3>
+        <div id="drawer-evidence" class="evidence-text"></div>
+      </div>
+      <div class="drawer-section">
+        <h3>Source path</h3>
+        <div id="drawer-path" class="drawer-path"></div>
+      </div>
+    </aside>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

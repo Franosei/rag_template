@@ -1,62 +1,73 @@
+"""Logging helpers for the FastAPI application."""
+
+from __future__ import annotations
+
+import json
 import logging
 import sys
-from pathlib import Path
-from rich.logging import RichHandler
-import json
-from datetime import datetime
+from datetime import datetime, timezone
 
-def setup_logging(level: str = "INFO", format_type: str = "pretty"):
-    """Configure global logging"""
-    
-    if format_type == "pretty":
-        # Development: Rich pretty-printed logs
-        handler = RichHandler(
-            rich_tracebacks=True,
-            markup=True,
-            show_time=True,
-            show_path=True
-        )
-        formatter = logging.Formatter("%(message)s")
-    else:
-        # Production: JSON logs for parsing
-        handler = logging.StreamHandler(sys.stdout)
-        formatter = JSONFormatter()
-    
-    handler.setFormatter(formatter)
-    
-    logging.basicConfig(
-        level=level,
-        handlers=[handler],
-        force=True  # Override any existing config
-    )
-    
-    # Suppress noisy libraries
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("openai").setLevel(logging.WARNING)
 
-class JSONFormatter(logging.Formatter):
-    """Format logs as JSON for production"""
+class JsonFormatter(logging.Formatter):
+    """Render structured JSON logs for production use."""
+
+    _RESERVED_FIELDS = {
+        "args",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "thread",
+        "threadName",
+    }
+
     def format(self, record: logging.LogRecord) -> str:
-        log_data = {
-            "timestamp": datetime.utcnow().isoformat(),
+        """Serialize the log record into a JSON string."""
+
+        payload: dict[str, object] = {
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
-            "module": record.module,
-            "function": record.funcName,
         }
-        
         if record.exc_info:
-            log_data["exception"] = self.formatException(record.exc_info)
-        
-        # Include extra fields passed via extra={...}
+            payload["exception"] = self.formatException(record.exc_info)
+
         for key, value in record.__dict__.items():
-            if key not in ["name", "msg", "args", "created", "filename", 
-                          "funcName", "levelname", "levelno", "lineno", 
-                          "module", "msecs", "message", "pathname", 
-                          "process", "processName", "relativeCreated", 
-                          "thread", "threadName", "exc_info", "exc_text", 
-                          "stack_info"]:
-                log_data[key] = value
-        
-        return json.dumps(log_data)
+            if key not in self._RESERVED_FIELDS:
+                payload[key] = value
+
+        return json.dumps(payload, default=str)
+
+
+def setup_logging(level: str = "INFO", format_type: str = "pretty") -> None:
+    """Configure the root logger once for the application process."""
+
+    handler = logging.StreamHandler(sys.stdout)
+    if format_type == "json":
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+
+    logging.basicConfig(level=level.upper(), handlers=[handler], force=True)
+
+    for logger_name in ("httpx", "urllib3", "pypdf"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)

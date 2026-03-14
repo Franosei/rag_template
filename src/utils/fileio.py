@@ -14,7 +14,7 @@ def save_yaml(data: Dict[str, Any], path: Path):
     with open(path, 'w', encoding='utf-8') as f:
         yaml.dump(data, f, default_flow_style=False)
 
-def load_json(path: Path) -> Dict[str, Any]:
+def load_json(path: Path) -> Any:
     """Load JSON file"""
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)

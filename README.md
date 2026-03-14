@@ -1,387 +1,413 @@
-# Graph RAG Multi-Agent Template
+# Clinical Trials Hybrid Agent
 
-A production-ready template for building intelligent document processing systems that combine Graph-based Retrieval-Augmented Generation (RAG) with multi-agent orchestration.
+Citation-first semantic document intelligence workspace for clinical-trials and regulatory documents.
+
+This repository provides a FastAPI backend and a professional browser UI for teams that need to ingest complex documents, search them by meaning, and generate grounded answers with evidence that can be inspected directly.
 
 ## Overview
 
-This project provides a comprehensive framework for ingesting heterogeneous document collections, extracting structured knowledge, and answering complex queries through coordinated AI agents. Unlike traditional RAG systems, it maintains full provenance through graph traces and adapts retrieval strategies based on folder-specific policies.
+Clinical and regulatory teams often have the same problem:
 
-## Key Features
+- documents live in different places
+- answers need traceable evidence
+- keyword-only search is not enough
+- non-technical users still need a usable interface
+- developers need an API and a clean backend they can extend
 
-### Intelligent Document Onboarding
-- **Folder Policy System**: Automatically profiles document collections and generates metadata, access rules, and retrieval strategies per folder
-- **Multi-format Support**: PDF, DOCX, XLSX, images, and tables with specialized extractors
-- **Automated Processing**: Watch folders for new documents and trigger ingestion pipelines
+This project solves that by combining:
 
-### Multi-Agent Architecture
-- **Specialized Agents**: Dedicated agents for scope selection, retrieval, table analysis, vision, reasoning, verification, and writing
-- **Coordinated Execution**: Graph-based orchestration tracks agent interactions and decision flows
-- **Flexible Composition**: Easily add, remove, or customize agents for your use case
+- semantic retrieval with cached embeddings
+- hybrid lexical retrieval for exact terminology
+- graph-based retrieval expansion
+- citation-aware answer synthesis
+- a dashboard that exposes the evidence behind each answer
 
-### Hybrid Retrieval
-- **Multi-strategy Search**: Combines vector similarity, keyword matching, and metadata filtering
-- **Context-Aware**: Leverages folder policies to route queries to relevant document scopes
-- **Authority-Based Routing**: Respects document hierarchy and access rules
+## Why This Repo Exists
 
-### Full Observability
-- **Execution Traces**: Every query generates a complete graph of agent actions, reasoning steps, and source citations
-- **Claim Verification**: Built-in verifier agent validates answers against source documents
-- **Export & Analysis**: Trace graphs exportable to JSON for debugging and auditing
+This repo is useful when you want to build or run a system that:
 
-### Production-Ready Safety
-- **Unknown by Default**: System refuses to speculate when information isn't in the documents
-- **Citation Requirements**: All claims must be traceable to specific sources
-- **PII Redaction**: Optional guardrails for sensitive information
-- **Guardrail Extensibility**: Easy to add custom safety checks
+- works on professional document collections
+- gives answers with citations instead of unsupported summaries
+- supports clinical-trials, regulatory, medical, or research-style PDFs and office documents
+- can be used both by developers and by non-technical teammates
+- is ready to run locally with FastAPI and easy to integrate into another application
 
-## Architecture Folder Directory
+## Why Someone Would Clone This Repo
 
-```
-graph-rag-multiagent-template/
-├─ README.md
-├─ LICENSE
-├─ .gitignore
-├─ .env.example
-├─ pyproject.toml
-├─ uv.lock / poetry.lock (choose one)
-├─ docker/
-│  ├─ Dockerfile
-│  ├─ docker-compose.yml
-│  └─ entrypoint.sh
-├─ scripts/
-│  ├─ dev_setup.sh
-│  ├─ run_local.sh
-│  ├─ ingest_folder.sh
-│  └─ lint_format.sh
-├─ configs/
-│  ├─ app.yaml
-│  ├─ logging.yaml
-│  ├─ folder_policy_schema.json
-│  ├─ graph_schema.json
-│  ├─ prompts/
-│  │  ├─ folder_profiler.md
-│  │  ├─ query_planner.md
-│  │  ├─ verifier.md
-│  │  └─ writer.md
-│  └─ routing/
-│     ├─ default_routes.yaml
-│     └─ authority_rules.yaml
-├─ data/                      # local-only, not committed (ignored)
-│  ├─ inbound/                # folders dropped here to be onboarded
-│  │  ├─ folder_001/
-│  │  └─ folder_002/
-│  ├─ processed/              # normalized extracts (chunks/tables/images)
-│  ├─ indices/                # vector + keyword indices (local dev)
-│  ├─ folder_registry/        # generated folder policies
-│  └─ runs/                   # per-request traces + outputs
-├─ src/
-│  ├─ app/
-│  │  ├─ __init__.py
-│  │  ├─ main.py              # CLI entry OR API entry wrapper
-│  │  ├─ settings.py          # env + config loading
-│  │  ├─ logging_config.py
-│  │  └─ dependencies.py      # shared deps (llm client, stores)
-│  ├─ api/                    # optional API layer (FastAPI)
-│  │  ├─ __init__.py
-│  │  ├─ server.py
-│  │  ├─ routes/
-│  │  │  ├─ health.py
-│  │  │  ├─ ingest.py
-│  │  │  └─ query.py
-│  │  └─ schemas/
-│  │     ├─ ingest.py
-│  │     └─ query.py
-│  ├─ core/
-│  │  ├─ __init__.py
-│  │  ├─ orchestration/
-│  │  │  ├─ graph_runner.py   # executes multi-agent flow + builds trace graph
-│  │  │  ├─ state.py          # shared run state object
-│  │  │  └─ events.py         # trace events & serialization
-│  │  ├─ graph/
-│  │  │  ├─ schema.py         # node/edge types + validation
-│  │  │  ├─ builder.py        # add nodes/edges consistently
-│  │  │  └─ exporters.py      # JSON export, claim ledger, etc.
-│  │  ├─ policies/
-│  │  │  ├─ folder_policy.py  # folder policy model + validator
-│  │  │  ├─ registry.py       # read/write registry of folders
-│  │  │  └─ routing.py        # scope selection + authority rules
-│  │  └─ safety/
-│  │     ├─ pii.py            # redaction hooks if needed
-│  │     └─ guardrails.py     # “unknown by default”, citations required, etc.
-│  ├─ agents/
-│  │  ├─ __init__.py
-│  │  ├─ base.py              # Agent interface
-│  │  ├─ folder_profiler.py   # generates Folder Policy (JSON)
-│  │  ├─ scope_selector.py
-│  │  ├─ retriever.py
-│  │  ├─ table_agent.py
-│  │  ├─ vision_agent.py
-│  │  ├─ reasoner.py
-│  │  ├─ verifier.py
-│  │  └─ writer.py
-│  ├─ ingestion/
-│  │  ├─ __init__.py
-│  │  ├─ folder_watcher.py    # detects new folders (polling for local dev)
-│  │  ├─ pipeline.py          # end-to-end onboarding
-│  │  ├─ extractors/
-│  │  │  ├─ pdf.py
-│  │  │  ├─ docx.py
-│  │  │  ├─ xlsx.py
-│  │  │  ├─ images.py
-│  │  │  └─ common.py
-│  │  └─ chunking/
-│  │     ├─ chunker.py
-│  │     └─ table_normalizer.py
-│  ├─ retrieval/
-│  │  ├─ __init__.py
-│  │  ├─ hybrid.py            # keyword + vector + metadata filters
-│  │  ├─ embeddings.py
-│  │  ├─ stores/
-│  │  │  ├─ vector_store.py   # interface
-│  │  │  ├─ local_faiss.py    # local dev implementation
-│  │  │  └─ cloud_adapter.py  # placeholder adapters (Azure/AWS/GCP)
-│  │  └─ ranking.py
-│  ├─ llm/
-│  │  ├─ __init__.py
-│  │  ├─ client.py            # OpenAI v1 client wrapper
-│  │  ├─ prompts.py           # loads prompts from configs/
-│  │  └─ json_mode.py         # strict JSON output utilities
-│  └─ utils/
-│     ├─ __init__.py
-│     ├─ fileio.py
-│     ├─ hashing.py
-│     ├─ ids.py
-│     ├─ timing.py
-│     └─ validation.py
-├─ tests/
-│  ├─ unit/
-│  │  ├─ test_folder_policy.py
-│  │  ├─ test_graph_schema.py
-│  │  └─ test_retrieval.py
-│  ├─ integration/
-│  │  ├─ test_onboarding_pipeline.py
-│  │  └─ test_query_flow.py
-│  └─ fixtures/
-│     └─ sample_docs/
-├─ docs/
-│  ├─ architecture.md
-│  ├─ graph_spec.md
-│  ├─ folder_policy_spec.md
-│  └─ deployment_notes.md
-└─ .github/
-   ├─ workflows/
-   │  ├─ ci.yml
-   │  └─ security.yml
-   └─ ISSUE_TEMPLATE/
-      ├─ bug_report.md
-      └─ feature_request.md
-```
+Clone this repository if you need:
 
-### Architecture
-```
-┌─────────────┐
-│  Documents  │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────┐
-│  Folder Profiler    │  Generates policy, schema, metadata
-│  (Agent)            │
-└──────┬──────────────┘
-       │
-       ▼
-┌─────────────────────┐
-│  Ingestion Pipeline │  Extract → Chunk → Embed → Index
-└──────┬──────────────┘
-       │
-       ▼
-┌─────────────────────┐
-│  Vector + Keyword   │
-│  Indices            │
-└──────┬──────────────┘
-       │
-       ▼
-    [Query]
-       │
-       ▼
-┌─────────────────────┐
-│  Multi-Agent Flow   │
-│                     │
-│  1. Scope Selector  │  Which folders are relevant?
-│  2. Retriever       │  Fetch candidate chunks
-│  3. Table Agent     │  Parse structured data
-│  4. Vision Agent    │  Analyze images/charts
-│  5. Reasoner        │  Synthesize information
-│  6. Verifier        │  Validate claims
-│  7. Writer          │  Format final answer
-└──────┬──────────────┘
-       │
-       ▼
-┌─────────────────────┐
-│  Answer + Graph     │  Response with full provenance
-└─────────────────────┘
-```
+- a ready-to-run RAG application with a usable frontend
+- a starting point for a clinical or regulatory document assistant
+- a FastAPI backend that exposes ingestion and query endpoints
+- a semantic retrieval workflow with local caching
+- a reference implementation for citation-first document QA
+
+## Who It Is For
+
+### Developers
+
+This repo is for developers who want to:
+
+- build internal AI search tools
+- integrate document-grounded answers into another product
+- use FastAPI as the backend for a retrieval system
+- extend ingestion, chunking, retrieval, or answer orchestration
+- prototype a secure local-first document AI workflow
+
+### Non-Technical Users
+
+This repo is also for teams where the end user is not a developer, such as:
+
+- clinical operations teams
+- medical affairs teams
+- regulatory teams
+- research analysts
+- program managers reviewing evidence
+
+Those users can work through the browser UI without writing code.
+
+## What The System Does
+
+- Ingests documents from:
+  - local paths inside approved safe roots
+  - remote URLs
+  - API manifests that return document URLs
+  - direct browser uploads
+- Extracts and chunks text from supported files
+- Builds a retrieval layer using:
+  - semantic retrieval
+  - hybrid lexical retrieval
+  - graph retrieval
+- Fuses the retrieved evidence into a final ranked set
+- Produces grounded answers with citations
+- Opens citation details in a right-side evidence drawer with:
+  - document name
+  - page number
+  - retrieval mode
+  - matched terms
+  - supporting passage
+  - source path
+
+## Main Features
+
+- FastAPI API for ingestion and question answering
+- Professional web dashboard for document search and evidence review
+- Semantic retrieval with cached OpenAI embeddings
+- Hybrid lexical retrieval for exact terminology and phrase grounding
+- Graph-based concept expansion
+- Citation drawer for human-readable evidence inspection
+- Retrieval diagnostics and run trace visibility
+- Controlled local-path access and size-limited remote ingestion
+
+## Retrieval Architecture
+
+The system does not rely on keyword overlap alone.
+
+It uses three retrieval layers:
+
+1. Semantic retrieval
+   Ranks chunks by meaning using embeddings.
+2. Hybrid lexical retrieval
+   Adds exact-term grounding using TF-IDF and BM25-style scoring.
+3. Graph retrieval
+   Expands related concepts and nearby evidence.
+
+These channels are fused before answer synthesis.
+
+## Supported Data Sources
+
+- `local_path`
+- `remote_url`
+- `api_manifest`
+- `inline_upload`
+- `seed_dataset`
+
+## Supported File Types
+
+- `.pdf`
+- `.docx`
+- `.xlsx`
+- `.xls`
+- `.csv`
+- `.txt`
+- `.md`
+- `.rst`
 
 ## Quick Start
 
-### Prerequisites
-- Python 3.11+
-- Docker (optional, for containerized deployment)
-- OpenAI API key or compatible LLM endpoint
+### 1. Clone the repository
 
-### Installation
-```bash
-# Clone the repository
-git clone https://github.com/Franosei/rag_template.git
-cd graph-rag-multiagent-template
-
-# Install dependencies (using uv)
-uv sync
-
-# Or using poetry
-poetry install
-
-# Copy environment template
-cp .env.example .env
-# Edit .env with your API keys and settings
+```powershell
+git clone <your-repo-url>
+cd rag_template
 ```
 
-### Configuration
+### 2. Create a virtual environment
 
-1. **Set up environment variables** in `.env`:
-```
-   OPENAI_API_KEY=your_key_here
-   LOG_LEVEL=INFO
-   VECTOR_STORE_TYPE=local  # or 'azure', 'aws', 'gcp'
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1
 ```
 
-2. **Customize configs** in `configs/`:
-   - `app.yaml`: Core application settings
-   - `prompts/`: Agent system prompts
-   - `routing/`: Folder authority and routing rules
+### 3. Install dependencies
 
-### Usage
-
-#### Ingest Documents
-```bash
-# Drop folders into data/inbound/
-cp -r /path/to/your/docs data/inbound/my_folder
-
-# Run ingestion
-./scripts/ingest_folder.sh my_folder
+```powershell
+py -3 -m pip install -e .
 ```
 
-This will:
-1. Profile the folder and generate a policy
-2. Extract and chunk all documents
-3. Build vector and keyword indices
-4. Store metadata in the folder registry
+### 4. Create your environment file
 
-#### Query the System
-```bash
-# CLI mode
-python -m src.app.main query "What are the key findings in the Q4 report?"
-
-# API mode (optional)
-uvicorn src.api.server:app --reload
-# Then POST to http://localhost:8000/api/query
+```powershell
+Copy-Item .env.example .env
 ```
 
-#### Run with Docker
-```bash
-docker-compose up
+Set at least:
+
+- `OPENAI_API_KEY`
+
+### 5. Start the app
+
+```powershell
+py -3 -m uvicorn src.api.server:app --reload
 ```
 
-## Project Structure
+### 6. Open the dashboard
 
-- **`src/agents/`**: Individual AI agents (profiler, retriever, verifier, etc.)
-- **`src/core/`**: Orchestration engine, graph builder, policies, safety guardrails
-- **`src/ingestion/`**: Document extraction, chunking, and indexing pipelines
-- **`src/retrieval/`**: Hybrid search with vector, keyword, and metadata filtering
-- **`src/api/`**: Optional FastAPI server for HTTP access
-- **`configs/`**: YAML/JSON configs for prompts, schemas, and routing rules
-- **`data/`**: Local storage for documents, indices, and execution traces (gitignored)
-- **`tests/`**: Unit and integration tests with sample fixtures
-
-## Use Cases
-
-- **Enterprise Knowledge Bases**: Search across diverse internal documents with full audit trails
-- **Regulatory Compliance**: Answer questions with verified citations to source documents
-- **Research Assistants**: Synthesize findings from academic papers, patents, or reports
-- **Customer Support**: Query product manuals, troubleshooting guides, and FAQs
-- **Legal Discovery**: Analyze contracts, agreements, and case files with provenance
-
-## Key Concepts
-
-### Folder Policies
-Each document folder gets a generated policy defining:
-- Document types and schemas
-- Expected entities and relationships
-- Retrieval strategies (dense vs. sparse)
-- Access and authority levels
-- Custom metadata for routing
-
-### Graph Traces
-Every query execution builds a directed graph capturing:
-- Which agents ran and in what order
-- What sources were retrieved
-- What reasoning steps were taken
-- Which claims were verified
-- Final answer composition
-
-Graphs are stored in `data/runs/` for debugging and compliance.
-
-### Authority-Based Routing
-The system respects document hierarchy:
-- Newer versions override older ones
-- Official sources take precedence over drafts
-- Scope selection considers user permissions (if configured)
-
-## Development
-```bash
-# Run tests
-pytest tests/
-
-# Lint and format
-./scripts/lint_format.sh
-
-# Local development setup
-./scripts/dev_setup.sh
+```text
+http://127.0.0.1:8000
 ```
 
-## Deployment
+By default, the bundled clinical-trials sample corpus is bootstrapped on startup.
 
-See `docs/deployment_notes.md` for:
-- Cloud vector store setup (Pinecone, Weaviate, Azure AI Search)
-- Kubernetes deployment manifests
-- Monitoring and observability integration
-- Scaling considerations for production
+## First-Run Notes
 
-## Roadmap
+On first startup with a valid API key:
 
-- [ ] Multi-language support for non-English documents
-- [ ] Incremental indexing (update without full reprocessing)
-- [ ] Real-time folder watching (inotify/fsevents)
-- [ ] Graph visualization UI for execution traces
-- [ ] Fine-tuned embeddings for domain-specific retrieval
-- [ ] Integration with LangSmith/Weights & Biases for tracing
+- the bundled sample corpus is ingested
+- semantic embeddings are created and cached locally
+- startup can take longer than later runs
 
-## Contributing
+Subsequent runs are faster because cached embeddings are reused from `data/indices/semantic_embeddings.json`.
 
-Contributions welcome! Please see:
-- `.github/ISSUE_TEMPLATE/` for bug reports and feature requests
-- `CONTRIBUTING.md` for development guidelines
-- `LICENSE` for terms
+## How Developers Can Use It
 
-## License
+### Option 1: Run it as a complete application
 
-<https://unlicense.org>
+Use the existing backend and frontend as a full document intelligence workspace.
 
-## Acknowledgments
+This is useful for:
 
-Built on principles from:
-- Graph RAG (Microsoft Research)
-- ReAct and multi-agent orchestration patterns
-- Modern RAG best practices (hybrid search, reranking, verification)
+- internal pilots
+- team knowledge workspaces
+- document QA portals
+- evidence review tools
 
----
+### Option 2: Integrate the API into another app
+
+You can call these endpoints from your own frontend or service:
+
+- `GET /api/health`
+- `GET /api/sources`
+- `POST /api/sources`
+- `POST /api/query`
+
+Example query payload:
+
+```json
+{
+  "question": "What do the ICH E9 and E9(R1) materials say about estimands?",
+  "folder_ids": [],
+  "top_k": 8
+}
+```
+
+### Option 3: Use the Python service layer directly
+
+The main orchestration entry point is `src/services/knowledge_base.py`.
+
+You can instantiate `KnowledgeBaseService` and call:
+
+- `bootstrap()`
+- `ingest_local_path()`
+- `ingest_remote_url()`
+- `ingest_api_manifest()`
+- `ingest_inline_upload()`
+- `query()`
+
+### What Developers Get Back
+
+The query workflow returns:
+
+- answer text
+- ranked citations
+- retrieval diagnostics
+- selected folder metadata
+- retrieval hits
+- run trace
+
+That makes it suitable for:
+
+- internal copilots
+- QA assistants
+- review systems
+- regulatory search portals
+- research evidence tools
+
+## How Non-Technical Users Can Use It
+
+### 1. Open the dashboard
+
+Use `http://127.0.0.1:8000`.
+
+### 2. Add documents
+
+Choose one of:
+
+- local path
+- remote URL
+- API manifest
+- upload from browser
+
+### 3. Select the collections you want
+
+Use the Indexed Collections panel to limit the search scope.
+
+### 4. Ask a question in plain language
+
+Examples:
+
+- "What is an estimand?"
+- "How should intercurrent events be handled?"
+- "What do these documents say about trial objectives?"
+
+### 5. Open the evidence
+
+Click the evidence references under the answer or in the citations panel to open the evidence drawer.
+
+## Environment Variables
+
+Important settings in `.env`:
+
+- `OPENAI_API_KEY`
+  Required for semantic retrieval and remote answer synthesis.
+- `OPENAI_BASE_URL`
+  Defaults to `https://api.openai.com/v1`.
+- `OPENAI_MODEL`
+  Chat model used for answer synthesis.
+- `OPENAI_EMBEDDING_MODEL`
+  Embedding model used for semantic retrieval.
+- `SEMANTIC_RETRIEVAL_ENABLED`
+  Enables semantic retrieval when embeddings are available.
+- `DEFAULT_TOP_K`
+  Number of final retrieval hits requested from the retrieval pipeline.
+- `MAX_ANSWER_CITATIONS`
+  Maximum number of citations returned to the UI.
+- `MAX_ANSWER_CONTEXT_CHUNKS`
+  Maximum number of retrieved chunks passed into answer synthesis.
+- `MAX_ANSWER_CONTEXT_CHARS`
+  Per-chunk character budget for answer synthesis context.
+- `ALLOWED_LOCAL_ROOTS`
+  Safe local directories allowed for `local_path` ingestion.
+- `AUTO_BOOTSTRAP_SAMPLE_DATA`
+  Controls whether the sample dataset is indexed on startup.
+
+## Example Source Registration Payloads
+
+Local path:
+
+```json
+{
+  "source_type": "local_path",
+  "location": "C:/safe-root/my-trial-docs",
+  "folder_name": "phase3_docs"
+}
+```
+
+Remote URL:
+
+```json
+{
+  "source_type": "remote_url",
+  "location": "https://example.org/protocol.pdf",
+  "folder_name": "downloaded_protocol"
+}
+```
+
+API manifest:
+
+```json
+{
+  "source_type": "api_manifest",
+  "location": "https://example.org/api/documents",
+  "folder_name": "sponsor_feed"
+}
+```
+
+Browser upload:
+
+```json
+{
+  "source_type": "inline_upload",
+  "filename": "protocol.pdf",
+  "content_base64": "<base64 payload>"
+}
+```
+
+## Project Layout
+
+```text
+src/
+  api/             FastAPI routes and request schemas
+  agents/          folder profiling logic
+  app/             settings, logging, local entrypoint
+  core/            policies, trace graph, orchestration state
+  ingestion/       extraction, chunking, and processing pipeline
+  llm/             OpenAI-compatible text and embedding client
+  retrieval/       semantic, hybrid, graph, and tokenization modules
+  services/        ingestion and query orchestration
+  web/             static frontend assets
+tests/             smoke tests
+data/
+  inbound/         managed source folders and bundled sample corpus
+  processed/       generated chunk and document outputs
+  indices/         cached semantic embeddings
+  folder_registry/ indexed collection policies
+  runs/            saved query traces
+```
+
+## Security And Operational Defaults
+
+- Local path ingestion is restricted to configured safe roots.
+- Unsupported file types are rejected early.
+- Remote downloads are size-limited before and during transfer.
+- Manifest ingestion is capped by `MAX_MANIFEST_ITEMS`.
+- The app stores processed chunks, retrieval traces, and embedding cache locally.
+- If the LLM is unavailable, the app falls back conservatively instead of inventing unsupported claims.
+
+## Verification
+
+The current implementation has been verified locally with:
+
+- `py -3 -m compileall src`
+- `py -3 -m pytest -q`
+- end-to-end ingestion and query runs against the bundled clinical-trials corpus
+
+## Notes For Production Teams
+
+This repo is a strong local and internal starting point, but production teams will usually want to add:
+
+- authentication and access control
+- audit logging and observability
+- persistent external storage
+- managed vector infrastructure
+- deployment automation
+- governance and retention controls
+
+## Summary
+
+This repository is best understood as:
+
+- a professional FastAPI RAG starter for clinical and regulatory documents
+- a citation-first semantic document QA system
+- a usable browser workspace for non-technical users
+- a backend foundation developers can integrate into larger systems
