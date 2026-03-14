@@ -425,3 +425,5 @@ data/processed/
 data/folder_registry/
 data/runs/
 data/indices/
+.env.example
+.env.example
